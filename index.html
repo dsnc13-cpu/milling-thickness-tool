@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ブロック厚み計算・フライス加算ツール</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#ffffff; --border:#d8dbe0; --text:#1f2328;
+    --accent:#2563eb; --accent-bg:#eaf1ff; --muted:#6b7280;
+    --warn:#b45309; --warn-bg:#fff7ed; --ok:#15803d;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:"Segoe UI","Yu Gothic UI","Meiryo",sans-serif;
+    background:var(--bg); color:var(--text); margin:0; padding:24px;
+  }
+  h1{font-size:20px; margin:0 0 4px;}
+  h2{font-size:16px; margin:28px 0 10px; border-left:4px solid var(--accent); padding-left:8px;}
+  p.desc{color:var(--muted); font-size:13px; margin:4px 0 20px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:20px;}
+  .block-select{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;}
+  .block-btn{
+    padding:6px 10px; border:1px solid var(--border); background:#fff; border-radius:6px;
+    cursor:pointer; font-size:12px; min-width:52px; text-align:center;
+  }
+  .block-btn.side-left{border-left:4px solid #2563eb;}
+  .block-btn.side-right{border-left:4px solid #d97706;}
+  .block-btn.active{background:var(--accent-bg); border-color:var(--accent); font-weight:600;}
+  .block-btn.filled::after{content:" ●"; color:var(--ok); font-size:9px;}
+  .form-grid{display:grid; grid-template-columns:120px 1fr; gap:10px 14px; align-items:center; max-width:640px;}
+  .form-grid label{font-size:13px; color:#374151;}
+  .form-grid input, .form-grid select{
+    padding:6px 8px; border:1px solid var(--border); border-radius:5px; font-size:13px; width:100%;
+  }
+  .pts-wrap{overflow-x:auto; margin-top:10px;}
+  table.pts{border-collapse:collapse; width:100%; font-size:12px;}
+  table.pts th, table.pts td{border:1px solid var(--border); padding:5px 6px; text-align:center;}
+  table.pts th{background:#f0f2f5;}
+  table.pts input{width:70px; padding:4px; border:1px solid var(--border); border-radius:4px; text-align:right;}
+  .corner-select{width:100%; padding:4px;}
+  .result-table-wrap{overflow-x:auto;}
+  table.result{border-collapse:collapse; width:100%; font-size:12px; min-width:900px;}
+  table.result th, table.result td{border:1px solid var(--border); padding:6px 5px; text-align:center; white-space:nowrap;}
+  table.result th{background:#eef1f5;}
+  table.result td.rep{font-weight:600; background:#fbfbfc;}
+  table.result td.delta-plus{color:#b91c1c; font-weight:600;}
+  table.result td.delta-minus{color:#1d4ed8; font-weight:600;}
+  table.result td.delta-zero{color:var(--muted);}
+  table.result tr.side-boundary td{border-top:3px solid #d97706;}
+  .empty-cell{color:#c8ccd2;}
+  .flow-note{font-size:12px; color:var(--muted); margin-top:8px;}
+  .btn{
+    padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px;
+    cursor:pointer; font-size:13px; margin-right:8px;
+  }
+  .btn.secondary{background:#fff; color:var(--accent); border:1px solid var(--accent);}
+  .toolbar{margin-bottom:16px;}
+  .badge-warn{background:var(--warn-bg); color:var(--warn); padding:2px 8px; border-radius:10px; font-size:11px; margin-left:8px;}
+  .hint{font-size:11px; color:var(--muted); margin-top:6px; line-height:1.6;}
+  .corner-diagram{font-size:11px; color:var(--muted); background:#f8f9fb; border:1px dashed var(--border); border-radius:6px; padding:8px; margin-top:10px; white-space:pre; font-family:monospace;}
+
+  @media (max-width:640px){
+    body{padding:12px;}
+    h1{font-size:17px;}
+    p.desc{font-size:12px;}
+    .panel{padding:12px; border-radius:6px;}
+    .toolbar{display:flex; flex-direction:column; gap:8px;}
+    .toolbar .btn{margin-right:0; width:100%; padding:11px 10px;}
+    .block-select{gap:5px;}
+    .block-btn{min-width:44px; padding:9px 6px; font-size:13px;}
+    .form-grid{grid-template-columns:1fr; gap:4px 0; max-width:100%;}
+    .form-grid label{margin-top:6px; font-weight:600;}
+    .form-grid input, .form-grid select{font-size:16px; padding:9px 8px;}
+    table.pts{font-size:11px;}
+    table.pts th, table.pts td{padding:4px 3px;}
+    table.pts input{width:100%; min-width:56px; font-size:14px; padding:6px 4px;}
+    .corner-diagram{font-size:10px; overflow-x:auto;}
+    table.result{font-size:11px;}
+  }
+</style>
+</head>
+<body>
+
+<h1>ブロック厚み計算・フライスZ加算ツール</h1>
+<p class="desc">取引先から出される測定点（内側の入り寸法＋厚み）から、ブロック四隅の実際の厚みを平面近似で逆算し、フライス加工時のZ原点加算値まで一括算出します。左1〜8 → 右1〜8 の順に加工する前提です。</p>
+
+<div class="panel">
+  <div class="toolbar">
+    <button class="btn secondary" onclick="exportData()">データをファイル保存</button>
+    <button class="btn secondary" onclick="document.getElementById('fileInput').click()">ファイルから読込</button>
+    <input type="file" id="fileInput" style="display:none" accept="application/json" onchange="importData(event)">
+    <button class="btn secondary" onclick="resetAll()">全クリア</button>
+  </div>
+  <div class="block-select" id="blockSelect"></div>
+</div>
+
+<div class="panel" id="bulkPanel"></div>
+
+<div class="panel" id="editPanel"></div>
+
+<h2>集計結果（左1〜8 → 右1〜8）</h2>
+<div class="panel result-table-wrap">
+  <table class="result" id="resultTable"></table>
+  <p class="flow-note">「代表厚み」は各ブロック4隅のうち最大値。「Z加算」は加工順で直前のブロックとの差（次の代表厚み − 前の代表厚み）をフライスのZ原点設定にそのまま入力する値です。左8→右1の切替え部分も自動計算されます。</p>
+</div>
+
+<script>
+const SIDES = ["left","right"];
+const IDX = [1,2,3,4,5,6,7,8];
+const CORNERS = ["LT","RT","RB","LB"]; // 左上・右上・右下・左下（ブロックを上から見た図）
+const CORNER_LABEL = {LT:"左上", RT:"右上", RB:"右下", LB:"左下"};
+
+function blockKey(side, i){ return side+"_"+i; }
+
+function defaultBlock(side, i){
+  return {
+    side, index:i,
+    width:null, depth:null,
+    // 測定点1が対応する隅、および回転方向
+    startCorner:"LT",
+    rotation: side==="left" ? "ccw" : "cw", // ccw=反時計回り, cw=時計回り
+    points:[
+      {use:true, xin:null, yin:null, th:null},
+      {use:true, xin:null, yin:null, th:null},
+      {use:true, xin:null, yin:null, th:null},
+      {use:true, xin:null, yin:null, th:null}
+    ]
+  };
+}
+
+let data = {};
+SIDES.forEach(side=>{
+  IDX.forEach(i=>{
+    data[blockKey(side,i)] = defaultBlock(side,i);
+  });
+});
+
+// 全ブロック共通の一括設定値（幅・奥行き・各測定点のX入り/Y入り・左右それぞれの測定点1の隅と回転方向・使用数）
+function defaultBulkSettings(){
+  return {
+    width:null, depth:null,
+    points:[
+      {xin:null, yin:null},
+      {xin:null, yin:null},
+      {xin:null, yin:null},
+      {xin:null, yin:null}
+    ],
+    left:{startCorner:"LT", rotation:"ccw"},
+    right:{startCorner:"RT", rotation:"cw"},
+    leftCount:8, rightCount:8
+  };
+}
+let bulkSettings = defaultBulkSettings();
+
+function activeBlockKeys(){
+  const s = bulkSettings;
+  const keys = [];
+  for(let i=1;i<=(s.leftCount??8);i++) keys.push(blockKey("left",i));
+  for(let i=1;i<=(s.rightCount??8);i++) keys.push(blockKey("right",i));
+  return keys;
+}
+
+let currentKey = blockKey("left",1);
+
+const STORAGE_KEY = "milling_thickness_tool_v1";
+const BULK_STORAGE_KEY = "milling_thickness_tool_bulk_v1";
+
+function save(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){}
+  try{ localStorage.setItem(BULK_STORAGE_KEY, JSON.stringify(bulkSettings)); }catch(e){}
+}
+function load(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){ data = JSON.parse(raw); }
+  }catch(e){}
+  try{
+    const raw = localStorage.getItem(BULK_STORAGE_KEY);
+    if(raw){ bulkSettings = JSON.parse(raw); }
+  }catch(e){}
+}
+
+function isBlockFilled(b){
+  const usedCount = b.points.filter(p=>p.use).length;
+  return b.width && b.depth && usedCount>=3 &&
+    b.points.filter(p=>p.use).every(p=>p.xin!=null && p.yin!=null && p.th!=null && p.xin!=="" && p.yin!=="" && p.th!=="");
+}
+
+function renderBlockSelect(){
+  const wrap = document.getElementById("blockSelect");
+  wrap.innerHTML = "";
+  const active = new Set(activeBlockKeys());
+  SIDES.forEach(side=>{
+    IDX.forEach(i=>{
+      const key = blockKey(side,i);
+      if(!active.has(key)) return;
+      const b = data[key];
+      const btn = document.createElement("div");
+      btn.className = "block-btn side-"+side + (key===currentKey?" active":"") + (isBlockFilled(b)?" filled":"");
+      btn.textContent = (side==="left"?"左":"右")+i;
+      btn.onclick = ()=>{ currentKey=key; renderAll(); };
+      wrap.appendChild(btn);
+    });
+  });
+}
+
+function num(v){
+  if(v===null || v===undefined || v==="") return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+
+function renderBulkPanel(){
+  const panel = document.getElementById("bulkPanel");
+  const s = bulkSettings;
+
+  let html = `<h2 style="margin-top:0">加工ブロックの指定</h2>
+  <p class="hint">今回の加工で実際に使うブロックの個数を指定してください。指定した数を超えるブロックは下の「ブロック選択」に表示されなくなります。</p>
+  <div class="form-grid">
+    <label>左ブロック使用数</label>
+    <select id="bulk_leftCount">
+      ${IDX.map(n=>`<option value="${n}" ${s.leftCount===n?"selected":""}>${n}個（左1〜左${n}）</option>`).join("")}
+    </select>
+    <label>右ブロック使用数</label>
+    <select id="bulk_rightCount">
+      ${IDX.map(n=>`<option value="${n}" ${s.rightCount===n?"selected":""}>${n}個（右1〜右${n}）</option>`).join("")}
+    </select>
+  </div>
+
+  <h2>全ブロック一括設定</h2>
+  <p class="hint">幅・奥行き・各測定点のX入り/Y入りは通常どのブロックも同じ値になるはずです。ここで入力して「一括適用」を押すと、使用中の全ブロックに即コピーされます。厚みだけは1ブロックごとに違うので、下の個別入力欄で入れてください。適用後も個別ブロックで上書き可能です。</p>
+  <div class="form-grid">
+    <label>ブロック幅 (mm)</label>
+    <input type="number" step="0.01" inputmode="decimal" id="bulk_width" value="${s.width??""}">
+    <label>ブロック奥行き (mm)</label>
+    <input type="number" step="0.01" inputmode="decimal" id="bulk_depth" value="${s.depth??""}">
+  </div>
+
+  <div class="pts-wrap"><table class="pts">
+    <tr><th>測定点</th><th>X入り(mm)</th><th>Y入り(mm)</th></tr>`;
+  for(let p=0;p<4;p++){
+    html += `<tr>
+      <td>測定点${p+1}</td>
+      <td><input type="number" step="0.01" inputmode="decimal" id="bulk_xin_${p}" value="${s.points[p].xin??""}"></td>
+      <td><input type="number" step="0.01" inputmode="decimal" id="bulk_yin_${p}" value="${s.points[p].yin??""}"></td>
+    </tr>`;
+  }
+  html += `</table></div>
+
+  <div class="form-grid" style="margin-top:14px;">
+    <label>左ブロック 測定点1の隅</label>
+    <select id="bulk_left_startCorner">
+      ${CORNERS.map(c=>`<option value="${c}" ${s.left.startCorner===c?"selected":""}>${CORNER_LABEL[c]}</option>`).join("")}
+    </select>
+    <label>左ブロック 回り方</label>
+    <select id="bulk_left_rotation">
+      <option value="cw" ${s.left.rotation==="cw"?"selected":""}>隣へ順に・時計回り</option>
+      <option value="ccw" ${s.left.rotation==="ccw"?"selected":""}>隣へ順に・反時計回り</option>
+      <option value="zigzag" ${s.left.rotation==="zigzag"?"selected":""}>ジグザグ（同じ辺→対角→同じ辺）</option>
+    </select>
+    <label>右ブロック 測定点1の隅</label>
+    <select id="bulk_right_startCorner">
+      ${CORNERS.map(c=>`<option value="${c}" ${s.right.startCorner===c?"selected":""}>${CORNER_LABEL[c]}</option>`).join("")}
+    </select>
+    <label>右ブロック 回り方</label>
+    <select id="bulk_right_rotation">
+      <option value="cw" ${s.right.rotation==="cw"?"selected":""}>隣へ順に・時計回り</option>
+      <option value="ccw" ${s.right.rotation==="ccw"?"selected":""}>隣へ順に・反時計回り</option>
+      <option value="zigzag" ${s.right.rotation==="zigzag"?"selected":""}>ジグザグ（同じ辺→対角→同じ辺）</option>
+    </select>
+  </div>
+
+  <div class="toolbar" style="margin-top:14px;">
+    <button class="btn" onclick="applyBulkSettings()">全ブロックに一括適用</button>
+  </div>`;
+
+  panel.innerHTML = html;
+
+  document.getElementById("bulk_leftCount").addEventListener("change", onCountChange);
+  document.getElementById("bulk_rightCount").addEventListener("change", onCountChange);
+
+  const ids = ["bulk_width","bulk_depth","bulk_left_startCorner","bulk_left_rotation","bulk_right_startCorner","bulk_right_rotation"];
+  for(let p=0;p<4;p++){ ids.push(`bulk_xin_${p}`, `bulk_yin_${p}`); }
+  ids.forEach(id=>{
+    document.getElementById(id).addEventListener("input", onBulkChange);
+    document.getElementById(id).addEventListener("change", onBulkChange);
+  });
+}
+
+function onCountChange(){
+  const s = bulkSettings;
+  s.leftCount = parseInt(document.getElementById("bulk_leftCount").value, 10);
+  s.rightCount = parseInt(document.getElementById("bulk_rightCount").value, 10);
+  // 現在選択中のブロックが使用範囲外になった場合は先頭の使用ブロックへ切り替える
+  const active = activeBlockKeys();
+  if(!active.includes(currentKey)){
+    currentKey = active[0] || blockKey("left",1);
+  }
+  save();
+  renderAll();
+}
+
+function onBulkChange(){
+  const s = bulkSettings;
+  s.width = num(document.getElementById("bulk_width").value);
+  s.depth = num(document.getElementById("bulk_depth").value);
+  for(let p=0;p<4;p++){
+    s.points[p].xin = num(document.getElementById(`bulk_xin_${p}`).value);
+    s.points[p].yin = num(document.getElementById(`bulk_yin_${p}`).value);
+  }
+  s.left.startCorner = document.getElementById("bulk_left_startCorner").value;
+  s.left.rotation = document.getElementById("bulk_left_rotation").value;
+  s.right.startCorner = document.getElementById("bulk_right_startCorner").value;
+  s.right.rotation = document.getElementById("bulk_right_rotation").value;
+  save();
+}
+
+function applyBulkSettings(){
+  const s = bulkSettings;
+  if(!confirm(`使用中の左${s.leftCount}個・右${s.rightCount}個（計${s.leftCount+s.rightCount}ブロック）の幅・奥行き・X入り/Y入り・測定点1の隅・回り方を一括設定値で上書きします。厚みの値は変更されません。よろしいですか？`)) return;
+  activeBlockKeys().forEach(key=>{
+    const b = data[key];
+    b.width = s.width;
+    b.depth = s.depth;
+    for(let p=0;p<4;p++){
+      b.points[p].xin = s.points[p].xin;
+      b.points[p].yin = s.points[p].yin;
+    }
+    const sideSetting = b.side==="left" ? s.left : s.right;
+    b.startCorner = sideSetting.startCorner;
+    b.rotation = sideSetting.rotation;
+  });
+  save();
+  renderAll();
+}
+
+function renderEditPanel(){
+  const b = data[currentKey];
+  const panel = document.getElementById("editPanel");
+  const sideLabel = b.side==="left" ? "左" : "右";
+
+  let html = `<h2 style="margin-top:0">${sideLabel}${b.index} の入力</h2>`;
+  html += `<div class="form-grid">
+    <label>ブロック幅 (mm)</label>
+    <input type="number" step="0.01" inputmode="decimal" id="f_width" value="${b.width??""}">
+    <label>ブロック奥行き (mm)</label>
+    <input type="number" step="0.01" inputmode="decimal" id="f_depth" value="${b.depth??""}">
+    <label>測定点1の隅</label>
+    <select id="f_startCorner">
+      ${CORNERS.map(c=>`<option value="${c}" ${b.startCorner===c?"selected":""}>${CORNER_LABEL[c]}</option>`).join("")}
+    </select>
+    <label>測定点の回り方</label>
+    <select id="f_rotation">
+      <option value="cw" ${b.rotation==="cw"?"selected":""}>隣へ順に・時計回り (1→2→3→4)</option>
+      <option value="ccw" ${b.rotation==="ccw"?"selected":""}>隣へ順に・反時計回り (1→2→3→4)</option>
+      <option value="zigzag" ${b.rotation==="zigzag"?"selected":""}>ジグザグ（同じ辺→対角→同じ辺）</option>
+    </select>
+  </div>`;
+
+  const previewOrder = cornerOrder(b.startCorner, b.rotation).map(c=>CORNER_LABEL[c]).join("→");
+  html += `<div class="corner-diagram">上から見た図　左上 - - - 右上
+　　　　　  |         |
+　　　　　左下 - - - 右下
+　現在の設定での順路：測定点1→2→3→4 は ${previewOrder} の順</div>`;
+
+  html += `<div class="pts-wrap"><table class="pts">
+    <tr><th>測定点</th><th>使用</th><th>X入り(mm)</th><th>Y入り(mm)</th><th>厚み(mm)</th></tr>`;
+  for(let p=0;p<4;p++){
+    const pt = b.points[p];
+    html += `<tr>
+      <td>測定点${p+1}</td>
+      <td><input type="checkbox" id="f_use_${p}" ${pt.use?"checked":""}></td>
+      <td><input type="number" step="0.01" inputmode="decimal" id="f_xin_${p}" value="${pt.xin??""}"></td>
+      <td><input type="number" step="0.01" inputmode="decimal" id="f_yin_${p}" value="${pt.yin??""}"></td>
+      <td><input type="number" step="0.01" inputmode="decimal" id="f_th_${p}" value="${pt.th??""}"></td>
+    </tr>`;
+  }
+  html += `</table></div>
+  <p class="hint">X入り＝測定点から左右の辺までの距離／Y入り＝測定点から奥/手前の辺までの距離。<br>
+  4点すべて入っている場合は最小二乗で平面近似、3点のみの場合はその3点で平面を一意に決定して4隅とも計算します。使用しない測定点はチェックを外してください。</p>`;
+
+  const activeOrder = activeBlockKeys();
+  const posIdx = activeOrder.indexOf(currentKey);
+  const hasPrev = posIdx > 0;
+  const hasNext = posIdx >= 0 && posIdx < activeOrder.length - 1;
+
+  html += `<div class="toolbar" style="margin-top:16px; display:flex; gap:8px;">
+    <button class="btn secondary" ${hasPrev?"":"disabled"} onclick="gotoAdjacentBlock(-1)" style="flex:1;">← 前のブロック</button>
+    <button class="btn" ${hasNext?"":"disabled"} onclick="gotoAdjacentBlock(1)" style="flex:1;">次のブロック →</button>
+  </div>`;
+
+  panel.innerHTML = html;
+
+  ["f_width","f_depth","f_startCorner","f_rotation"].forEach(id=>{
+    document.getElementById(id).addEventListener("input", onEditChange);
+    document.getElementById(id).addEventListener("change", onEditChange);
+  });
+  for(let p=0;p<4;p++){
+    ["use","xin","yin","th"].forEach(field=>{
+      const el = document.getElementById(`f_${field}_${p}`);
+      el.addEventListener("input", onEditChange);
+      el.addEventListener("change", onEditChange);
+    });
+  }
+}
+
+function gotoAdjacentBlock(step){
+  const activeOrder = activeBlockKeys();
+  const posIdx = activeOrder.indexOf(currentKey);
+  const nextIdx = posIdx + step;
+  if(nextIdx < 0 || nextIdx >= activeOrder.length) return;
+  currentKey = activeOrder[nextIdx];
+  renderAll();
+  const panel = document.getElementById("editPanel");
+  if(panel) panel.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function onEditChange(){
+  const b = data[currentKey];
+  b.width = num(document.getElementById("f_width").value);
+  b.depth = num(document.getElementById("f_depth").value);
+  b.startCorner = document.getElementById("f_startCorner").value;
+  b.rotation = document.getElementById("f_rotation").value;
+  for(let p=0;p<4;p++){
+    b.points[p].use = document.getElementById(`f_use_${p}`).checked;
+    b.points[p].xin = num(document.getElementById(`f_xin_${p}`).value);
+    b.points[p].yin = num(document.getElementById(`f_yin_${p}`).value);
+    b.points[p].th  = num(document.getElementById(`f_th_${p}`).value);
+  }
+  save();
+  renderBlockSelect();
+  renderResultTable();
+}
+
+// 測定点1〜4を実際の四隅(LT/RT/RB/LB)へ割り当てる
+function cornerOrder(startCorner, rotation){
+  if(rotation==="zigzag"){
+    // 常に「同じ辺(縦方向)へ移動 → 対角 → 同じ辺へ移動」の順
+    const zigzagMap = {
+      LT:["LT","LB","RT","RB"],
+      LB:["LB","LT","RB","RT"],
+      RT:["RT","RB","LT","LB"],
+      RB:["RB","RT","LB","LT"]
+    };
+    return zigzagMap[startCorner];
+  }
+  const cw_order = ["LT","RT","RB","LB"];
+  const ccw_order = ["LT","LB","RB","RT"];
+  const base = rotation==="cw" ? cw_order : ccw_order;
+  const startIdx = base.indexOf(startCorner);
+  const order = [];
+  for(let k=0;k<4;k++){
+    order.push(base[(startIdx+k)%4]);
+  }
+  return order; // order[0] = 測定点1の隅, order[1] = 測定点2の隅, ...
+}
+
+// 隅の座標（幅W, 奥行きD） x:右方向, y:奥方向 とする
+function cornerXY(corner, W, D){
+  switch(corner){
+    case "LT": return [0,0];
+    case "RT": return [W,0];
+    case "RB": return [W,D];
+    case "LB": return [0,D];
+  }
+}
+
+// 測定点の実座標を計算：入り寸法は最寄りの隅からの距離とする
+function pointXY(corner, xin, yin, W, D){
+  let x, y;
+  if(corner==="LT"){ x=xin; y=yin; }
+  else if(corner==="RT"){ x=W-xin; y=yin; }
+  else if(corner==="RB"){ x=W-xin; y=D-yin; }
+  else if(corner==="LB"){ x=xin; y=D-yin; }
+  return [x,y];
+}
+
+// 最小二乗 or 3点厳密解で平面 z = a*x + b*y + c を求める
+function fitPlane(points){
+  // points: [{x,y,z}, ...]  3点以上
+  const n = points.length;
+  // 正規方程式を組み立てる (Ax=b形式、3変数 a,b,c)
+  let Sxx=0,Sxy=0,Sx=0,Syy=0,Sy=0,S1=n;
+  let Sxz=0,Syz=0,Sz=0;
+  points.forEach(p=>{
+    Sxx+=p.x*p.x; Sxy+=p.x*p.y; Sx+=p.x;
+    Syy+=p.y*p.y; Sy+=p.y;
+    Sxz+=p.x*p.z; Syz+=p.y*p.z; Sz+=p.z;
+  });
+  // [Sxx Sxy Sx][a]   [Sxz]
+  // [Sxy Syy Sy][b] = [Syz]
+  // [Sx  Sy  S1][c]   [Sz]
+  const A = [[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,S1]];
+  const B = [Sxz,Syz,Sz];
+  return solve3x3(A,B); // returns [a,b,c] or null
+}
+
+function solve3x3(A,B){
+  const det = (M)=>
+    M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) -
+    M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) +
+    M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0]);
+  const D = det(A);
+  if(Math.abs(D) < 1e-9) return null;
+  function replaceCol(M,col,vec){
+    const R = M.map(row=>row.slice());
+    for(let i=0;i<3;i++) R[i][col]=vec[i];
+    return R;
+  }
+  const a = det(replaceCol(A,0,B))/D;
+  const b = det(replaceCol(A,1,B))/D;
+  const c = det(replaceCol(A,2,B))/D;
+  return [a,b,c];
+}
+
+function computeBlockCorners(b){
+  if(!b.width || !b.depth) return null;
+  const order = cornerOrder(b.startCorner, b.rotation);
+  const usedPts = [];
+  for(let p=0;p<4;p++){
+    const pt = b.points[p];
+    if(pt.use && pt.xin!=null && pt.yin!=null && pt.th!=null){
+      const corner = order[p];
+      const [x,y] = pointXY(corner, pt.xin, pt.yin, b.width, b.depth);
+      usedPts.push({x,y,z:pt.th});
+    }
+  }
+  if(usedPts.length < 3) return null;
+  const plane = fitPlane(usedPts);
+  if(!plane) return null;
+  const [a,bb,c] = plane;
+  const result = {};
+  CORNERS.forEach(corner=>{
+    const [x,y] = cornerXY(corner, b.width, b.depth);
+    result[corner] = a*x + bb*y + c;
+  });
+  return result;
+}
+
+function renderResultTable(){
+  const table = document.getElementById("resultTable");
+  let html = `<tr>
+    <th>順</th><th>ブロック</th><th>測定点1</th><th>測定点2</th><th>測定点3</th><th>測定点4</th><th>代表厚み(最大)</th><th>Z加算(次-前)</th>
+  </tr>`;
+
+  const order = activeBlockKeys();
+
+  let prevRep = null;
+  let seq = 0;
+  order.forEach((key, idx)=>{
+    seq++;
+    const b = data[key];
+    const corners = computeBlockCorners(b);
+    const sideLabel = b.side==="left" ? "左" : "右";
+    const isBoundary = (idx>0 && order[idx-1].startsWith("left") && key.startsWith("right"));
+
+    let rep = null;
+    if(corners){
+      rep = Math.max(corners.LT, corners.RT, corners.RB, corners.LB);
+    }
+
+    let delta = null;
+    if(rep!=null && prevRep!=null){
+      delta = rep - prevRep;
+    }
+
+    html += `<tr class="${isBoundary?"side-boundary":""}">`;
+    html += `<td>${seq}</td><td>${sideLabel}${b.index}</td>`;
+    if(corners){
+      const pointOrder = cornerOrder(b.startCorner, b.rotation); // pointOrder[0]=測定点1の隅, ...
+      pointOrder.forEach(c=>{
+        html += `<td>${corners[c].toFixed(2)}</td>`;
+      });
+    } else {
+      for(let p=0;p<4;p++){ html += `<td class="empty-cell">-</td>`; }
+    }
+    html += `<td class="rep">${rep!=null?rep.toFixed(2):'<span class="empty-cell">-</span>'}</td>`;
+    if(delta!=null){
+      const cls = delta>1e-9 ? "delta-plus" : (delta<-1e-9 ? "delta-minus" : "delta-zero");
+      const sign = delta>0 ? "+" : "";
+      html += `<td class="${cls}">${sign}${delta.toFixed(2)}</td>`;
+    } else {
+      html += `<td class="empty-cell">-</td>`;
+    }
+    html += `</tr>`;
+
+    if(rep!=null) prevRep = rep;
+  });
+
+  table.innerHTML = html;
+}
+
+function renderAll(){
+  renderBlockSelect();
+  renderBulkPanel();
+  renderEditPanel();
+  renderResultTable();
+}
+
+function exportData(){
+  const payload = { data, bulkSettings };
+  const blob = new Blob([JSON.stringify(payload,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "block_thickness_data.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const loaded = JSON.parse(e.target.result);
+      if(loaded && loaded.data){
+        data = loaded.data;
+        bulkSettings = loaded.bulkSettings || defaultBulkSettings();
+      } else {
+        // 旧形式(dataのみのフラットな形)との互換
+        data = loaded;
+      }
+      save();
+      renderAll();
+    }catch(err){
+      alert("読み込みに失敗しました: "+err.message);
+    }
+  };
+  reader.readAsText(file);
+  evt.target.value = "";
+}
+
+function resetAll(){
+  if(!confirm("全データをクリアします。よろしいですか？")) return;
+  SIDES.forEach(side=>{
+    IDX.forEach(i=>{
+      data[blockKey(side,i)] = defaultBlock(side,i);
+    });
+  });
+  bulkSettings = defaultBulkSettings();
+  save();
+  renderAll();
+}
+
+load();
+renderAll();
+</script>
+
+</body>
+</html>
