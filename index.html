@@ -47,6 +47,8 @@
   table.result td.delta-plus{color:#b91c1c; font-weight:600;}
   table.result td.delta-minus{color:#1d4ed8; font-weight:600;}
   table.result td.delta-zero{color:var(--muted);}
+  table.result .shim{display:block; font-size:10px; color:var(--warn); margin-top:2px; font-weight:600;}
+  table.result .shim-zero{display:block; font-size:10px; color:var(--muted); margin-top:2px;}
   table.result tr.side-boundary td{border-top:3px solid #d97706;}
   .empty-cell{color:#c8ccd2;}
   .flow-note{font-size:12px; color:var(--muted); margin-top:8px;}
@@ -102,7 +104,8 @@
 <h2>集計結果（左1〜8 → 右1〜8）</h2>
 <div class="panel result-table-wrap">
   <table class="result" id="resultTable"></table>
-  <p class="flow-note">「代表厚み」は各ブロック4隅のうち最大値。「Z加算」は加工順で直前のブロックとの差（次の代表厚み − 前の代表厚み）をフライスのZ原点設定にそのまま入力する値です。左8→右1の切替え部分も自動計算されます。</p>
+  <p class="flow-note">「代表厚み」は各ブロック4隅のうち最大値。「Z加算」は加工順で直前のブロックとの差（次の代表厚み − 前の代表厚み）をフライスのZ原点設定にそのまま入力する値です。左8→右1の切替え部分も自動計算されます。<br>
+  各測定点の値の下の「シム」は、そのブロックの代表厚み（最大）との差です。最大厚みの位置を基準にフライスで削るため、それ以外の測定点にはこの厚さ分のシムを挟んで対応してください。</p>
 </div>
 
 <script>
@@ -570,7 +573,15 @@ function renderResultTable(){
     if(corners){
       const pointOrder = cornerOrder(b.startCorner, b.rotation); // pointOrder[0]=測定点1の隅, ...
       pointOrder.forEach(c=>{
-        html += `<td>${corners[c].toFixed(2)}</td>`;
+        const th = corners[c];
+        const shim = rep!=null ? rep - th : null;
+        let shimHtml = "";
+        if(shim!=null){
+          shimHtml = shim > 1e-9
+            ? `<span class="shim">シム+${shim.toFixed(2)}</span>`
+            : `<span class="shim-zero">シム0.00</span>`;
+        }
+        html += `<td>${th.toFixed(2)}${shimHtml}</td>`;
       });
     } else {
       for(let p=0;p<4;p++){ html += `<td class="empty-cell">-</td>`; }
